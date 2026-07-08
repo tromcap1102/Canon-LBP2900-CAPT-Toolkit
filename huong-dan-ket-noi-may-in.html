@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hướng dẫn kết nối máy in Canon LBP2900 qua mạng</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --surface-alt: #f0f2f5;
+    --text: #1a1d23;
+    --text-dim: #5b6270;
+    --border: #e2e5ea;
+    --accent: #2563eb;
+    --accent-dim: #eaf0fe;
+    --ok: #15803d;
+    --ok-bg: #e8f7ee;
+    --warn: #b45309;
+    --warn-bg: #fef4e6;
+    --danger: #b91c1c;
+    --danger-bg: #fdeaea;
+    --code-bg: #eef0f4;
+    --shadow: 0 1px 3px rgba(20,22,30,0.08), 0 1px 2px rgba(20,22,30,0.06);
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a;
+    --surface: #1c1f26;
+    --surface-alt: #23262e;
+    --text: #eef0f4;
+    --text-dim: #9aa2b1;
+    --border: #2c303a;
+    --accent: #6d9bff;
+    --accent-dim: #1c2740;
+    --ok: #4ade80;
+    --ok-bg: #123420;
+    --warn: #fbbf24;
+    --warn-bg: #3a2c0d;
+    --danger: #f87171;
+    --danger-bg: #3a1414;
+    --code-bg: #23262e;
+    --shadow: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14161a;
+      --surface: #1c1f26;
+      --surface-alt: #23262e;
+      --text: #eef0f4;
+      --text-dim: #9aa2b1;
+      --border: #2c303a;
+      --accent: #6d9bff;
+      --accent-dim: #1c2740;
+      --ok: #4ade80;
+      --ok-bg: #123420;
+      --warn: #fbbf24;
+      --warn-bg: #3a2c0d;
+      --danger: #f87171;
+      --danger-bg: #3a1414;
+      --code-bg: #23262e;
+      --shadow: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 32px 20px 80px; }
+
+  header.page { text-align: center; margin-bottom: 32px; }
+  header.page h1 {
+    font-size: 1.7rem;
+    margin: 0 0 8px;
+    letter-spacing: -0.02em;
+  }
+  header.page p { color: var(--text-dim); margin: 0; font-size: 0.98rem; }
+
+  .diagram {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: 24px 0 8px;
+    padding: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+  }
+  .diagram .node {
+    text-align: center;
+    padding: 14px 16px;
+    border-radius: 10px;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    min-width: 120px;
+    font-size: 0.85rem;
+  }
+  .diagram .node .icon { font-size: 1.6rem; display: block; margin-bottom: 4px; }
+  .diagram .node .label { font-weight: 600; }
+  .diagram .node .sub { color: var(--text-dim); font-size: 0.78rem; margin-top: 2px; }
+  .diagram .arrow { color: var(--accent); font-size: 1.3rem; font-weight: 700; }
+
+  section.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    padding: 24px 24px 20px;
+    margin-bottom: 24px;
+  }
+  section.card > h2 {
+    margin: 0 0 4px;
+    font-size: 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  section.card > p.desc { color: var(--text-dim); margin: 0 0 18px; font-size: 0.94rem; }
+
+  /* Tabs (CSS-only, no JS) */
+  .tabs { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  .tabs input[type="radio"] { display: none; }
+  .tabs label {
+    cursor: pointer;
+    padding: 9px 18px;
+    border-radius: 999px;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 0.92rem;
+    color: var(--text-dim);
+    transition: all .15s ease;
+  }
+  #tab-linux:checked ~ .tabs label[for="tab-linux"],
+  #tab-windows:checked ~ .tabs label[for="tab-windows"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .tab-panel { display: none; }
+  #tab-linux:checked ~ .tab-panel.panel-linux { display: block; }
+  #tab-windows:checked ~ .tab-panel.panel-windows { display: block; }
+
+  .sub-tabs { display: flex; gap: 8px; margin: 4px 0 18px; }
+  .sub-tabs input[type="radio"] { display: none; }
+  .sub-tabs label {
+    cursor: pointer;
+    padding: 7px 14px;
+    border-radius: 8px;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    font-size: 0.86rem;
+    font-weight: 600;
+    color: var(--text-dim);
+  }
+  #win-auto:checked ~ .sub-tabs label[for="win-auto"],
+  #win-manual:checked ~ .sub-tabs label[for="win-manual"] {
+    background: var(--ok-bg);
+    border-color: var(--ok);
+    color: var(--ok);
+  }
+  .sub-panel { display: none; }
+  #win-auto:checked ~ .sub-panel.sp-auto { display: block; }
+  #win-manual:checked ~ .sub-panel.sp-manual { display: block; }
+
+  ol.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+  ol.steps > li {
+    counter-increment: step;
+    position: relative;
+    padding: 2px 0 18px 42px;
+    border-left: 2px solid var(--border);
+    margin-left: 15px;
+  }
+  ol.steps > li:last-child { border-left-color: transparent; padding-bottom: 2px; }
+  ol.steps > li::before {
+    content: counter(step);
+    position: absolute;
+    left: -16px;
+    top: -2px;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.88rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  ol.steps > li strong { display: block; margin-bottom: 4px; }
+  ol.steps > li .step-note { color: var(--text-dim); font-size: 0.9rem; margin-top: 4px; }
+
+  code, .code-inline {
+    font-family: "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+    background: var(--code-bg);
+    padding: 2px 7px;
+    border-radius: 5px;
+    font-size: 0.88em;
+    word-break: break-all;
+  }
+  pre.code-block {
+    font-family: "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 0.86rem;
+    margin: 10px 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .callout {
+    display: flex;
+    gap: 10px;
+    padding: 13px 16px;
+    border-radius: 10px;
+    margin: 14px 0;
+    font-size: 0.92rem;
+    align-items: flex-start;
+  }
+  .callout .icon { font-size: 1.1rem; line-height: 1.4; flex-shrink: 0; }
+  .callout.info { background: var(--accent-dim); color: var(--text); }
+  .callout.ok { background: var(--ok-bg); color: var(--text); }
+  .callout.warn { background: var(--warn-bg); color: var(--text); }
+  .callout.danger { background: var(--danger-bg); color: var(--text); }
+  .callout strong { color: inherit; }
+
+  .menu-list { margin: 10px 0; padding: 0; list-style: none; }
+  .menu-list li {
+    display: flex;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.92rem;
+  }
+  .menu-list li:last-child { border-bottom: none; }
+  .menu-num {
+    flex-shrink: 0;
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.78rem;
+    color: var(--text-dim);
+  }
+
+  details.faq {
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 10px;
+  }
+  details.faq summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.95rem;
+    list-style: none;
+  }
+  details.faq summary::-webkit-details-marker { display: none; }
+  details.faq summary::before { content: "▸ "; color: var(--accent); }
+  details.faq[open] summary::before { content: "▾ "; }
+  details.faq p { margin: 10px 0 2px; color: var(--text-dim); font-size: 0.9rem; }
+
+  footer.page {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.82rem;
+    margin-top: 36px;
+  }
+
+  a { color: var(--accent); }
+
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--ok-bg);
+    color: var(--ok);
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page">
+    <h1>🖨️ Kết nối máy in Canon LBP2900 qua mạng</h1>
+    <p>Hướng dẫn dành cho máy tính khác trong mạng LAN muốn dùng chung máy in đang cắm ở máy chủ Linux</p>
+  </header>
+
+  <div class="diagram">
+    <div class="node">
+      <span class="icon">🐧</span>
+      <div class="label">Máy chủ Linux</div>
+      <div class="sub">cắm máy in Canon LBP2900 qua USB</div>
+    </div>
+    <div class="arrow">⇄</div>
+    <div class="node">
+      <span class="icon">📶</span>
+      <div class="label">Mạng LAN</div>
+      <div class="sub">cùng WiFi / dây mạng</div>
+    </div>
+    <div class="arrow">⇄</div>
+    <div class="node">
+      <span class="icon">💻</span>
+      <div class="label">Máy của bạn</div>
+      <div class="sub">Linux hoặc Windows</div>
+    </div>
+  </div>
+
+  <section class="card">
+    <h2>✅ Trước khi bắt đầu</h2>
+    <p class="desc">Kiểm tra 2 điều sau trên máy chủ Linux (máy cắm máy in):</p>
+    <ul>
+      <li>Máy chủ đang <strong>bật</strong> và kết nối cùng mạng LAN với máy của bạn.</li>
+      <li>Đã chạy công cụ <code>may-in-lbp2900.sh</code> và chọn mục <strong>1) Gỡ và cài lại LBP2900</strong> ít nhất một lần — bước này tự bật chia sẻ qua mạng.</li>
+    </ul>
+    <div class="callout info">
+      <span class="icon">ℹ️</span>
+      <div>Ghi nhớ <strong>địa chỉ IP</strong> của máy chủ (ví dụ <code>192.168.1.152</code>) — bạn sẽ cần nhập địa chỉ này ở các bước dưới.</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Chọn hệ điều hành máy của bạn</h2>
+
+    <input type="radio" name="ostab" id="tab-linux" checked>
+    <input type="radio" name="ostab" id="tab-windows">
+    <div class="tabs">
+      <label for="tab-linux">🐧 Linux</label>
+      <label for="tab-windows">🪟 Windows</label>
+    </div>
+
+    <!-- ============ LINUX PANEL ============ -->
+    <div class="tab-panel panel-linux">
+      <p class="desc">Chạy đúng công cụ <code>may-in-lbp2900.sh</code> ngay trên máy Linux của bạn (không cần cài gì thêm trước).</p>
+      <ol class="steps">
+        <li>
+          <strong>Chép file <code>may-in-lbp2900.sh</code> sang máy này</strong>
+          <div class="step-note">Copy qua USB, chia sẻ mạng, hoặc dùng lệnh <code>scp</code> từ máy chủ.</div>
+        </li>
+        <li>
+          <strong>Mở Terminal tại thư mục chứa file, chạy:</strong>
+          <pre class="code-block">sudo bash may-in-lbp2900.sh</pre>
+        </li>
+        <li>
+          <strong>Trong menu hiện ra, chọn mục 2</strong>
+          <div class="step-note"><code>2) Cài LBP2900 qua mạng từ máy khác (Linux)</code></div>
+        </li>
+        <li>
+          <strong>Nhập địa chỉ IP máy chủ khi được hỏi</strong>
+          <div class="step-note">Hoặc nhấn Enter để dùng địa chỉ mặc định đã ghi sẵn trong script.</div>
+        </li>
+        <li>
+          <strong>Xong!</strong>
+          <div class="step-note">Script tự kiểm tra kết nối, cài đặt, đăng ký máy in và gửi 1 trang in thử để xác nhận.</div>
+        </li>
+      </ol>
+      <div class="callout ok">
+        <span class="icon">✔️</span>
+        <div>Máy in sẽ xuất hiện với tên <code>LBP2900</code> trong danh sách máy in của bạn (kiểm tra bằng <code>lpstat -p -d</code>).</div>
+      </div>
+    </div>
+
+    <!-- ============ WINDOWS PANEL ============ -->
+    <div class="tab-panel panel-windows">
+      <input type="radio" name="wintab" id="win-auto" checked>
+      <input type="radio" name="wintab" id="win-manual">
+      <div class="sub-tabs">
+        <label for="win-auto">⚡ Tự động (khuyên dùng)</label>
+        <label for="win-manual">🖱️ Thủ công</label>
+      </div>
+
+      <div class="sub-panel sp-auto">
+        <p class="desc">Dùng 2 file có sẵn trong bộ công cụ: <code>cai-may-in-lbp2900-windows.bat</code> và <code>cai-may-in-lbp2900-windows.ps1</code>.</p>
+        <ol class="steps">
+          <li>
+            <strong>Chép cả 2 file vào cùng một thư mục trên máy Windows</strong>
+            <div class="step-note">Phải để chung thư mục — file .bat sẽ tự gọi file .ps1 bên cạnh nó.</div>
+          </li>
+          <li>
+            <strong>Nhấp đúp (double-click) vào file <code>cai-may-in-lbp2900-windows.bat</code></strong>
+          </li>
+          <li>
+            <strong>Bấm <span class="code-inline">Yes</span> khi Windows hỏi quyền Administrator</strong>
+            <div class="step-note">Cửa sổ UAC (nền tối) sẽ hiện lên — đây là bước bắt buộc để Windows cho phép cài máy in.</div>
+          </li>
+          <li>
+            <strong>Nhập địa chỉ IP máy chủ khi được hỏi</strong>
+            <div class="step-note">Hoặc nhấn Enter để dùng địa chỉ mặc định.</div>
+          </li>
+          <li>
+            <strong>Trả lời "Y" khi được hỏi có muốn in thử không</strong>
+            <div class="step-note">Script sẽ tự thêm máy in và gửi 1 trang in thử để xác nhận mọi thứ hoạt động.</div>
+          </li>
+        </ol>
+        <div class="callout info">
+          <span class="icon">ℹ️</span>
+          <div>Windows sẽ tự dùng driver IPP có sẵn của nó — <strong>không cần cài driver Canon nào</strong> trên máy Windows.</div>
+        </div>
+      </div>
+
+      <div class="sub-panel sp-manual">
+        <p class="desc">Nếu muốn tự thao tác bằng tay qua giao diện Windows, không cần file .bat.</p>
+        <ol class="steps">
+          <li>
+            <strong>Vào <span class="code-inline">Settings</span> → <span class="code-inline">Bluetooth &amp; devices</span> → <span class="code-inline">Printers &amp; scanners</span></strong>
+          </li>
+          <li>
+            <strong>Bấm <span class="code-inline">Add device</span></strong>
+            <div class="step-note">Đợi vài giây — máy in có thể tự xuất hiện trong danh sách nhờ tự động dò tìm (mDNS).</div>
+          </li>
+          <li>
+            <strong>Nếu không tự xuất hiện, bấm "Add manually"</strong>
+            <div class="step-note">Có thể ghi là "The printer that I want isn't listed".</div>
+          </li>
+          <li>
+            <strong>Chọn <span class="code-inline">Select a shared printer by name</span></strong>
+          </li>
+          <li>
+            <strong>Nhập đúng địa chỉ này (thay IP bằng IP máy chủ thật):</strong>
+            <pre class="code-block">http://192.168.1.152:631/printers/LBP2900</pre>
+          </li>
+          <li>
+            <strong>Bấm Next và đợi Windows cài xong</strong>
+            <div class="step-note">Windows tự chọn driver IPP chuẩn, không cần chọn thủ công.</div>
+          </li>
+          <li>
+            <strong>In thử một trang để kiểm tra</strong>
+          </li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>🛠️ Xử lý sự cố</h2>
+    <p class="desc">Máy in Canon LBP2900 là dòng máy khá cũ, thỉnh thoảng có thể "kẹt" khi nhận lệnh in. Đây là quy trình xử lý theo mức độ, thực hiện trên <strong>máy chủ Linux</strong> (nơi cắm máy in):</p>
+
+    <div class="callout warn">
+      <span class="icon">🔁</span>
+      <div><strong>Máy in không phản hồi / báo lỗi khi in</strong><br>
+      Chạy <code>sudo bash may-in-lbp2900.sh</code> trên máy chủ, chọn <strong>mục 4</strong> — công cụ tự động reset lại kết nối USB bằng phần mềm.</div>
+    </div>
+
+    <div class="callout warn">
+      <span class="icon">🖼️</span>
+      <div><strong>In tài liệu có nhiều hình ảnh bị treo</strong><br>
+      Chạy <code>sudo bash may-in-lbp2900.sh</code> trên máy chủ, chọn <strong>mục 5</strong> — công cụ tự vá 2 lỗi thường gặp khi in tài liệu phức tạp.</div>
+    </div>
+
+    <div class="callout danger">
+      <span class="icon">🔌</span>
+      <div><strong>Vẫn không được sau khi thử 2 bước trên</strong><br>
+      Tắt nguồn máy in, đợi khoảng 10 giây, bật lại. Đây là bước cuối cùng luôn hiệu quả với dòng máy in này.</div>
+    </div>
+
+    <p class="desc" style="margin-top:18px;">Toàn bộ menu của công cụ trên máy chủ:</p>
+    <ul class="menu-list">
+      <li><span class="menu-num">1</span> Gỡ và cài lại LBP2900 (máy chủ, cắm trực tiếp USB)</li>
+      <li><span class="menu-num">2</span> Cài LBP2900 qua mạng từ máy khác (Linux)</li>
+      <li><span class="menu-num">3</span> Cài LBP2900 qua mạng từ máy khác (Windows) — hướng dẫn</li>
+      <li><span class="menu-num">4</span> Sửa lỗi "máy in không phản hồi"</li>
+      <li><span class="menu-num">5</span> Vá lỗi treo khi in tài liệu phức tạp</li>
+      <li><span class="menu-num">6</span> Thoát</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>❓ Câu hỏi thường gặp</h2>
+
+    <details class="faq">
+      <summary>Máy chủ Linux có cần bật liên tục không?</summary>
+      <p>Có. Máy chủ là nơi thực sự nói chuyện với máy in qua USB, nên phải đang bật và kết nối mạng thì các máy khác mới in được.</p>
+    </details>
+
+    <details class="faq">
+      <summary>Địa chỉ IP máy chủ thay đổi thì sao?</summary>
+      <p>Kiểm tra IP mới trên máy chủ (lệnh <code>ip a</code>), rồi nhập lại IP mới khi làm theo hướng dẫn ở trên. Nên cấu hình IP tĩnh cho máy chủ trên router để tránh phải làm lại.</p>
+    </details>
+
+    <details class="faq">
+      <summary>Có cần cài driver Canon trên máy Windows/Linux khách không?</summary>
+      <p>Không. Máy chủ Linux đã xử lý việc chuyển đổi sang định dạng máy in hiểu (CAPT). Máy khách chỉ cần driver IPP chuẩn có sẵn trong hệ điều hành.</p>
+    </details>
+
+    <details class="faq">
+      <summary>In từ nhiều máy cùng lúc có sao không?</summary>
+      <p>Máy in này khá cũ và dễ "kẹt" nếu nhiều máy gửi lệnh in gần như đồng thời. Nên in tuần tự — chờ máy trước in xong rồi mới gửi lệnh tiếp theo.</p>
+    </details>
+
+  </section>
+
+  <footer class="page">
+    Canon CAPT Toolkit — công cụ &amp; hướng dẫn tự tạo cho máy in Canon LBP2900 / LBP2900B<br>
+    Design by Bruce Nguyen from <a href="https://cctvwiki.com" target="_blank" rel="noopener">CCTVWIKI.COM</a> và Claude Code Max
+  </footer>
+
+</div>
+</body>
+</html>

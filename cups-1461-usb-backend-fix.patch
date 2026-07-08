@@ -1,0 +1,214 @@
+From 3715ea2d0c524779ce4a7bbef0f8046ddd43a234 Mon Sep 17 00:00:00 2001
+From: ValdikSS <iam@valdikss.org.ru>
+Date: Thu, 26 Feb 2026 03:51:18 +0300
+Subject: [PATCH 1/3] libusb backend: attempt to fix DRAIN_OUTPUT race
+ condition. Fixes #1461
+
+CUPS_SC_CMD_DRAIN_OUTPUT sidechannel command is supposed to ensure that
+all the data sent by the filter would be consumed by the backend and
+sent to the printer via USB before it returns.
+
+However, if backend's main thread read and processed filter's data
+before filter managed to send CUPS_SC_CMD_DRAIN_OUTPUT, the filter
+will be blocked for 1 second, as backend will be blocked in select()
+waiting for new data (while filter is waiting for DRAIN_OUTPUT
+response and does not send anything).
+
+This is a hacky attempt to fix this issue. However, it's not without
+flaw:
+* If backend's main thread is slow and sidechannel thread is fast,
+  the response to CUPS_SC_CMD_DRAIN_OUTPUT may be sent without
+  actually draining (and even reading) the data.
+* This means that's a tradeoff towards potentially breaking framing
+  of some USB protocols to prevent 1-second locking (and breaking
+  printing for timing-sensitive protocols).
+---
+ backend/usb-libusb.c | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/backend/usb-libusb.c b/backend/usb-libusb.c
+index 30b2a0c1c8..fc539ceb19 100644
+--- a/backend/usb-libusb.c
++++ b/backend/usb-libusb.c
+@@ -1884,7 +1884,17 @@ sidechannel_thread(void *reference)
+ 	  fputs("DEBUG: CUPS_SC_CMD_DRAIN_OUTPUT received from driver...\n",
+ 		stderr);
+ 
+-	  g.drain_output = 1;
++	  pthread_mutex_lock(&g.readwrite_lock_mutex);
++	  if (!g.readwrite_lock && !g.print_bytes)
++	  {
++	  /* If main thread is inside select() and there's no data to send, assume
++	   * select() has no timeout and send a response... */
++	    cupsSideChannelWrite(CUPS_SC_CMD_DRAIN_OUTPUT, CUPS_SC_STATUS_OK, NULL, 0, 1.0);
++	    g.drain_output = 0;
++	  }
++	  else
++	    g.drain_output = 1;
++	  pthread_mutex_unlock(&g.readwrite_lock_mutex);
+ 	  break;
+ 
+       case CUPS_SC_CMD_GET_BIDI:	/* Is the connection bidirectional? */
+
+From 6c12bbfa8288a83f07ab209e09778e1567d14c2b Mon Sep 17 00:00:00 2001
+From: ValdikSS <iam@valdikss.org.ru>
+Date: Thu, 26 Feb 2026 16:29:25 +0300
+Subject: [PATCH 2/3] libusb backend: use pipe to wake up select()'ing main
+ thread
+
+Instead of a hacky way to detect which thread needs to respond
+to CUPS_SC_CMD_DRAIN_OUTPUT command, use pipe to kick
+select() in the main thread, and process everything there.
+---
+ backend/usb-libusb.c | 49 ++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 41 insertions(+), 8 deletions(-)
+
+diff --git a/backend/usb-libusb.c b/backend/usb-libusb.c
+index fc539ceb19..17695c00dd 100644
+--- a/backend/usb-libusb.c
++++ b/backend/usb-libusb.c
+@@ -78,6 +78,8 @@ typedef struct usb_globals_s		/* Global USB printer information */
+   pthread_cond_t	sidechannel_thread_cond;
+   int			sidechannel_thread_stop;
+   int			sidechannel_thread_done;
++
++  int			wakeup_pipe[2];	/* Pipe for waking up select() in the main thread */
+ } usb_globals_t;
+ 
+ /*
+@@ -188,12 +190,14 @@ print_device(const char *uri,		/* I - Device URI */
+ 		*print_ptr;		/* Pointer into print data buffer */
+   fd_set	input_set;		/* Input set for select() */
+   int		nfds;			/* Number of file descriptors */
++  int		nfd_max;		/* Maximum file descriptor number for select() */
+   struct timeval *timeout,		/* Timeout pointer */
+ 		tv;			/* Time value */
+   struct timespec cond_timeout;		/* pthread condition timeout */
+   int		num_opts;		/* Number of options */
+   cups_option_t	*opts;			/* Options */
+   const char	*val;			/* Option value */
++  char		dummy;			/* select() wakeup bogus data */
+ 
+ 
+   load_quirks();
+@@ -205,6 +209,17 @@ print_device(const char *uri,		/* I - Device URI */
+   have_sidechannel = !fstat(CUPS_SC_FD, &sidechannel_info) &&
+                      S_ISSOCK(sidechannel_info.st_mode);
+ 
++ /*
++  * Create a pipe for waking up the main thread from select()...
++  */
++
++  if (pipe(g.wakeup_pipe) < 0)
++  {
++    fprintf(stderr, "DEBUG: Unable to create wakeup pipe - %s\n",
++	    strerror(errno));
++    return (CUPS_BACKEND_STOP);
++  }
++
+   g.wait_eof = WAIT_EOF;
+ 
+  /*
+@@ -346,12 +361,15 @@ print_device(const char *uri,		/* I - Device URI */
+       lseek(print_fd, 0, SEEK_SET);
+     }
+ 
++    nfd_max = (print_fd > g.wakeup_pipe[0] ? print_fd : g.wakeup_pipe[0]) + 1;
++
+     while (status == CUPS_BACKEND_OK)
+     {
+       FD_ZERO(&input_set);
+ 
+       if (!g.print_bytes)
+ 	FD_SET(print_fd, &input_set);
++      FD_SET(g.wakeup_pipe[0], &input_set);
+ 
+      /*
+       * Calculate select timeout...
+@@ -384,7 +402,7 @@ print_device(const char *uri,		/* I - Device URI */
+       pthread_cond_signal(&g.readwrite_lock_cond);
+       pthread_mutex_unlock(&g.readwrite_lock_mutex);
+ 
+-      nfds = select(print_fd + 1, &input_set, NULL, NULL, timeout);
++      nfds = select(nfd_max, &input_set, NULL, NULL, timeout);
+ 
+      /*
+       * Reacquire the lock...
+@@ -415,6 +433,13 @@ print_device(const char *uri,		/* I - Device URI */
+ 	}
+       }
+ 
++     /*
++      * Check if we were woken up by the sidechannel thread...
++      */
++
++      if (FD_ISSET(g.wakeup_pipe[0], &input_set))
++	read(g.wakeup_pipe[0], &dummy, 1);
++
+      /*
+       * If drain output has finished send a response...
+       */
+@@ -641,6 +666,13 @@ print_device(const char *uri,		/* I - Device URI */
+ 
+   close_device(g.printer);
+ 
++ /*
++  * Close the wakeup pipe...
++  */
++
++  close(g.wakeup_pipe[0]);
++  close(g.wakeup_pipe[1]);
++
+  /*
+   * Clean up ....
+   */
+@@ -1884,16 +1916,17 @@ sidechannel_thread(void *reference)
+ 	  fputs("DEBUG: CUPS_SC_CMD_DRAIN_OUTPUT received from driver...\n",
+ 		stderr);
+ 
++	  g.drain_output = 1;
+ 	  pthread_mutex_lock(&g.readwrite_lock_mutex);
+-	  if (!g.readwrite_lock && !g.print_bytes)
++	  if (!g.readwrite_lock)
+ 	  {
+-	  /* If main thread is inside select() and there's no data to send, assume
+-	   * select() has no timeout and send a response... */
+-	    cupsSideChannelWrite(CUPS_SC_CMD_DRAIN_OUTPUT, CUPS_SC_STATUS_OK, NULL, 0, 1.0);
+-	    g.drain_output = 0;
++	   /*
++	    * If main thread is inside select(), assume it has infinite
++	    * timeout and needs to be woken up.
++	    */
++	    if (write(g.wakeup_pipe[1], &data, 1) < 0)
++	      fputs("DEBUG: Error writing to wakeup pipe\n", stderr);
+ 	  }
+-	  else
+-	    g.drain_output = 1;
+ 	  pthread_mutex_unlock(&g.readwrite_lock_mutex);
+ 	  break;
+ 
+
+From 510ebb3c3933477c0082ef58a8b00d7469d5ddfe Mon Sep 17 00:00:00 2001
+From: ValdikSS <iam@valdikss.org.ru>
+Date: Thu, 26 Feb 2026 20:04:15 +0300
+Subject: [PATCH 3/3] libusb backend: send DRAIN response after drain_output is
+ handled
+
+---
+ backend/usb-libusb.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/backend/usb-libusb.c b/backend/usb-libusb.c
+index 17695c00dd..dff49ef11e 100644
+--- a/backend/usb-libusb.c
++++ b/backend/usb-libusb.c
+@@ -447,8 +447,8 @@ print_device(const char *uri,		/* I - Device URI */
+       if (g.drain_output && !nfds && !g.print_bytes)
+       {
+ 	/* Send a response... */
+-	cupsSideChannelWrite(CUPS_SC_CMD_DRAIN_OUTPUT, CUPS_SC_STATUS_OK, NULL, 0, 1.0);
+ 	g.drain_output = 0;
++	cupsSideChannelWrite(CUPS_SC_CMD_DRAIN_OUTPUT, CUPS_SC_STATUS_OK, NULL, 0, 1.0);
+       }
+ 
+      /*
