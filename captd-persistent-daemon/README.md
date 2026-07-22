@@ -25,9 +25,9 @@ project's `README.md`.
 - `capt-backend.c` — a thin CUPS backend (`capt:/path/to/socket` device URI)
   that replaces the stock `usb://` backend: instead of opening the USB device
   itself, it connects to `captd` over the Unix socket for each job.
-- `prn_lbp2900.c`, `printer.h`, `capt-command.h` — the patched captdriver
-  filter sources (drop-in replacements for the same files in captdriver's
-  `src/`), with the following fixes on top of upstream:
+- `prn_lbp2900.c`, `printer.h`, `capt-command.h`, `capt-command.c` — the
+  patched captdriver filter sources (drop-in replacements for the same files in
+  captdriver's `src/`), with the following fixes on top of upstream:
   - Send `SetJobInfo2(flag=CONT)` repeatedly (~every 500ms) throughout the
     entire physical print duration, not just once — matches the genuine
     Canon Linux driver's observed heartbeat cadence.
@@ -41,21 +41,56 @@ project's `README.md`.
   - Note: `ReserveUnit`'s payload should stay all-zero — that was already
     correct; an earlier hypothesis about a non-zero Windows-only byte was a
     dead end.
+  - **Reply-stream resync (`capt-command.c`, added 2026-07-22)** — fixes the
+    follow-up desync bug listed below. `capt_sendrecv()` no longer calls
+    `exit(1)` when a reply header does not match the command it just sent;
+    it slides the read window forward one byte at a time (bounded, 256 bytes)
+    until the expected command word appears, discarding the stale reply and
+    continuing the job. Also makes `capt_recv_buf()` loop until it has all the
+    bytes it asked for, since `cupsBackChannelRead()` may legally return a
+    short read (defensive — this path was never observed to trigger here).
 
 ## Result
 
-14 consecutive real print jobs succeeded in one power-cycle session with this
-combination (previously **always** failed on job 5, in every test across the
-whole investigation). One occasional, self-recovering USB reply desync bug
-remains in the `captd`/`capt-backend` relay (not the original engine wedge) —
-tracked as a follow-up, not yet fixed.
+**Original engine wedge: fixed.** Previously the printer wedged on *exactly*
+job 5 in every single test. With this combination it ran 58 jobs in one
+power-on session with zero wedges, including several unbroken runs of 10–15.
+
+**Follow-up desync bug: also fixed** (2026-07-22). The remaining
+"`bad reply from printer, expected A1 A0 xx xx xx xx, got D0 00 00 02 B0 09`"
+failure was diagnosed: because `captd` deliberately keeps one USB session open
+across jobs, a reply the printer was still emitting when the *previous* job's
+filter exited stays queued, so the next job's first read gets the tail of the
+old reply and every read after it is shifted by that offset. It killed ~1 job
+in 8 before the fix.
+
+Two changes address it, and the second is the one that actually makes it safe:
+
+1. `captd` now drains the endpoint on client *disconnect* (after a 400ms
+   settle) as well as on connect. This narrows the window a lot — measured
+   2 failures in 15 jobs before, 1 in 40 after — but a time-based drain is
+   inherently racy and did **not** eliminate it.
+2. The filter now *resynchronises* instead of dying (see `capt-command.c`
+   above). This is deterministic rather than timing-dependent.
+
+Verified by injecting a deliberate 3-byte offset into the stream: the filter
+logged `reply stream out of sync … got D0 00 00 A1 A1 38` (the real `A1 A1`
+header visibly shifted 3 bytes in), then
+`resynchronised after discarding 3 stale byte(s) -- job continues`, and the
+job printed normally. 20 further real jobs afterwards: no desync, no wedge.
 
 ## Installing
+
+**The project's `may-in-lbp2900.sh` (option 1) now does all of this
+automatically** — that is the normal way to install it. Before 2026-07-22 the
+script did *not*: these sources sat here unused while the script built stock
+captdriver against the `usb://` backend, so every install still wedged on job
+5. If you are doing it by hand:
 
 1. Build `captd` (needs `libusb-1.0-dev`, `-lpthread`) and run it as a
    persistent service (root, for USB access) — see the comment at the top of
    `captd.c` for the wire protocol if you want to adapt it.
-2. Copy the 3 patched sources over the matching files in captdriver's `src/`
+2. Copy the 4 patched sources over the matching files in captdriver's `src/`
    and rebuild `rastertocapt` as usual.
 3. Build `capt-backend` (needs `libcups2-dev`) and install it to
    `/usr/lib/cups/backend/capt` (root-owned, mode 0700, matching CUPS's

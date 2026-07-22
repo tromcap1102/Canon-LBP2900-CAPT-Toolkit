@@ -3,15 +3,20 @@
 # Repo: https://github.com/brucenguyen1102/Canon-LBP2900-CAPT-Toolkit
 # Design by Bruce Nguyen from CCTVWIKI.COM va Claude Code Max
 # ============================================================================
-# CONG CU TONG HOP: Canon LBP2900 / LBP2900B tren Ubuntu/Mint (captdriver)
-#   1) Go va cai lai LBP2900 (may nay cam truc tiep qua USB) - dung driver
-#      ValdikSS/captdriver (co page-streaming, tranh treo khi in tai lieu
-#      nhieu hinh anh), da duoc gia co them (xem captdriver-engine-hardening.patch:
-#      job ket thuc cho engine may in that su ranh truoc khi thoat, cac vong lap
-#      cho trang thai co gioi han thoi gian thay vi treo vo han, log chan doan chi
-#      tiet hon) + tu dong va loi race condition CUPS backend + chia se qua LAN
-#      + bat LogLevel debug vinh vien cho CUPS (de neu co su co sau nay thi
-#      /var/log/cups/error_log da co san du log chi tiet de phan tich)
+# CONG CU TONG HOP: Canon LBP2900 / LBP2900B tren Ubuntu/Mint
+#   1) Go va cai lai LBP2900 (may nay cam truc tiep qua USB) - hoi chon 1 trong
+#      2 loai driver (2 driver loai tru lan nhau, cai cai nay tu go cai kia):
+#      a. Driver CUSTOM ValdikSS/captdriver (mac dinh, khuyen nghi - co
+#         page-streaming, tranh treo khi in tai lieu nhieu hinh anh), da duoc
+#         gia co them (xem captdriver-engine-hardening.patch: job ket thuc cho
+#         engine may in that su ranh truoc khi thoat, cac vong lap cho trang
+#         thai co gioi han thoi gian thay vi treo vo han, log chan doan chi
+#         tiet hon) + tu dong va loi race condition CUPS backend + chia se qua
+#         LAN + bat LogLevel debug vinh vien cho CUPS (de neu co su co sau nay
+#         thi /var/log/cups/error_log da co san du log chi tiet de phan tich)
+#      b. Driver CHINH HANG Canon v2.71 (tu goi linux-capt-drv-v271-uken.tar.gz
+#         dat canh script, tu dong cai thu vien ho tro 32-bit can thiet, bat
+#         daemon ccpd, khoi phuc module usblp ma driver custom da go)
 #   2) Cai LBP2900 qua mang tu may khac (Linux) - ket noi toi may chu da chia se
 #   3) Cai LBP2900 qua mang tu may khac (Windows) - hien huong dan (xem them
 #      file huong-dan-ket-noi-may-in.html di kem)
@@ -36,6 +41,9 @@
 #   - captdriver-valdikss-val.tar.gz   (ma nguon captdriver ValdikSS)
 #   - cups-1461-usb-backend-fix.patch  (patch va loi CUPS usb backend)
 # (buoc "apt-get source cups" van can mang toi kho Ubuntu, khong lien quan GitHub)
+# Neu chon cai driver Canon CHINH HANG o muc 1, can them file (bat buoc, vi
+# driver Canon co ban quyen rieng nen khong tu tai ve duoc):
+#   - linux-capt-drv-v271-uken.tar.gz  (CAPT Printer Driver for Linux v2.71)
 # ============================================================================
 set -uo pipefail
 
@@ -63,6 +71,27 @@ PRODUCT_ID="2676"
 CAPTDRIVER_REPO="https://github.com/ValdikSS/captdriver.git"
 CAPTDRIVER_BRANCH="val"
 CAPTDRIVER_BUNDLE="${SCRIPT_DIR}/captdriver-valdikss-val.tar.gz"
+# Goi driver Canon CHINH HANG v2.71 (CAPT Printer Driver for Linux), dat canh
+# script. Chi can khi nguoi dung chon cai driver chinh hang o MUC 1 - driver
+# nay co ban quyen Canon, khong tu dong tai ve duoc, phai lay tu trang Canon.
+# --- Ban va "engine wedge job 5" (captd persistent daemon) ---------------
+# Nguyen nhan goc (tim ra 2026-07-14): rastertocapt la CUPS *filter*, con
+# CUPS usb backend MO VA DONG lai ket noi USB mieng moi job, nen tu job thu 5
+# ke tu luc bat may la engine may in ket cung ("ReserveUnit failed 0x8c",
+# phai tat bat lai may in). Driver Canon that (ca Windows lan Linux) khong bi
+# vi chung giu MOT phien USB lien tuc qua tat ca cac job (Canon dung daemon
+# ccpd). captd + capt-backend o day lam dung kien truc do, cong voi 3 file
+# nguon captdriver da va lai giao thuc cho khop driver Canon Linux that.
+# BAT BUOC phai co ca 4 phan, thieu bat ky phan nao la loi job 5 quay lai.
+CAPTD_SRC_DIR="${SCRIPT_DIR}/captd-persistent-daemon"
+CAPTD_SOCK="/run/captd/lbp2900.sock"
+CAPTD_BIN="/usr/local/bin/captd"
+CAPTD_SERVICE="/etc/systemd/system/captd.service"
+# 3 file nguon captdriver da va (ghi de len file cung ten trong src/ truoc build)
+CAPTD_PATCHED_SRCS=(prn_lbp2900.c printer.h capt-command.h capt-command.c)
+CANON_OFFICIAL_BUNDLE="${SCRIPT_DIR}/linux-capt-drv-v271-uken.tar.gz"
+CANON_OFFICIAL_PPD="/usr/share/cups/model/CNCUPSLBP2900CAPTK.ppd"
+CANON_OFFICIAL_URI="ccp://localhost:59687"
 GIT_TIMEOUT_SECS=120
 PPD_PATH=""
 CANON_URI=""
@@ -81,15 +110,19 @@ CUPS_PATCH_MARKER="wakeup pipe"
 
 # -y/--yes/--non-interactive: tu dong chon mac dinh cho moi cau hoi.
 # Tham so so (1-5) con lai: chay thang muc do roi thoat, bo qua menu.
+# --official: o MUC 1, cai driver Canon chinh hang thay vi driver custom
+# (bo qua cau hoi chon driver).
 # --rollback-cups-backend / --rollback-captdriver-filter: khoi phuc nhanh
 # (nang cao, khong hien trong menu) neu muc 5 gay van de moi.
 ASSUME_YES=0
 DIRECT_ACTION=""
+DRIVER_OFFICIAL=0
 ROLLBACK_CUPS_BACKEND=0
 ROLLBACK_CAPTDRIVER_FILTER=0
 for _arg in "$@"; do
     case "$_arg" in
         -y|--yes|--non-interactive) ASSUME_YES=1 ;;
+        --official|--canon-official) DRIVER_OFFICIAL=1 ;;
         --rollback-cups-backend) ROLLBACK_CUPS_BACKEND=1 ;;
         --rollback-captdriver-filter) ROLLBACK_CAPTDRIVER_FILTER=1 ;;
         1|2|3|4|5) DIRECT_ACTION="$_arg" ;;
@@ -600,11 +633,160 @@ fix_ipp_usb_and_usblp() {
 install_build_deps() {
     log_step "Cai dat goi phu thuoc de build captdriver"
     apt-get update -y || log_warn "apt-get update gap loi, van tiep tuc thu cai dat..."
-    if ! apt-get install -y build-essential automake libcups2-dev cups-ppdc cups cups-client usbutils git; then
+    # libusb-1.0-0-dev + pkg-config + autoconf/libtool: can de build captd
+    # (daemon giu phien USB lien tuc - xem build_and_install_captd).
+    if ! apt-get install -y build-essential automake autoconf libtool pkg-config \
+            libusb-1.0-0-dev libcups2-dev cups-ppdc cups cups-client usbutils git; then
         log_error "Khong the cai dat goi phu thuoc build. Kiem tra ket noi mang / nguon apt."
         return 1
     fi
     return 0
+}
+
+# Ghi de 3 file nguon captdriver da va giao thuc (nam trong captd-persistent-
+# daemon/ canh script) len file cung ten trong <BUILD_DIR>/src/. Cac sua doi:
+#   - SetJobInfo2(flag=CONT) gui LAP LAI ~500ms suot ca qua trinh in (truoc
+#     day chi gui 1 lan/job) - dung nhip driver Canon Linux that.
+#   - Gui GetExtendedStatus (0xA0A8) HAI LAN ngay truoc MOI ReserveUnit
+#     (truoc day dung GetBasicStatus 0xE0A0 - khong giong driver that).
+#   - Sua vai byte payload SetJobInfo2/IC_BEGIN_PAGE (2 bit co che do,
+#     truong TonerDensity, co ket thuc job dung 3 chu khong phai 6).
+overlay_captd_patched_sources() {
+    log_step "Ghi de ma nguon captdriver da va (chong ket cung engine o job 5)"
+
+    if [[ ! -d "$CAPTD_SRC_DIR" ]]; then
+        log_error "Khong tim thay thu muc ma nguon da va: $CAPTD_SRC_DIR"
+        log_error "Thu muc nay phai nam CANH script (cung cho voi may-in-lbp2900.sh)."
+        return 1
+    fi
+
+    local f
+    for f in "${CAPTD_PATCHED_SRCS[@]}"; do
+        if [[ ! -f "${CAPTD_SRC_DIR}/${f}" ]]; then
+            log_error "Thieu file ma nguon da va: ${CAPTD_SRC_DIR}/${f}"
+            return 1
+        fi
+        if [[ ! -f "${BUILD_DIR}/src/${f}" ]]; then
+            log_error "Ma nguon captdriver khong co file ${BUILD_DIR}/src/${f} (goi nguon sai phien ban?)"
+            return 1
+        fi
+        if ! cp -f "${CAPTD_SRC_DIR}/${f}" "${BUILD_DIR}/src/${f}"; then
+            log_error "Khong ghi de duoc ${BUILD_DIR}/src/${f}"
+            return 1
+        fi
+        log_info "Da ghi de src/${f}"
+    done
+
+    log_ok "Da ap dung ${#CAPTD_PATCHED_SRCS[@]} file nguon da va truoc khi build."
+    return 0
+}
+
+# Build + cai dat captd (daemon giu MOT phien USB lien tuc) va capt-backend
+# (CUPS backend mong noi toi daemon qua Unix socket, THAY THE backend usb://
+# chuan cua CUPS). Day la phan quan trong nhat cua ban va: chi sua ma nguon
+# captdriver thoi la KHONG DU - da thu nghiem thuc te va van ket cung o job 5.
+build_and_install_captd() {
+    log_step "Build va cai dat captd (daemon giu phien USB lien tuc)"
+
+    local src_captd="${CAPTD_SRC_DIR}/captd.c"
+    local src_backend="${CAPTD_SRC_DIR}/capt-backend.c"
+    if [[ ! -f "$src_captd" || ! -f "$src_backend" ]]; then
+        log_error "Thieu captd.c / capt-backend.c trong $CAPTD_SRC_DIR"
+        return 1
+    fi
+
+    local tmpd
+    tmpd="$(mktemp -d)" || { log_error "Khong tao duoc thu muc tam."; return 1; }
+
+    local usb_cflags usb_libs cups_libs
+    usb_cflags="$(pkg-config --cflags libusb-1.0 2>/dev/null || true)"
+    usb_libs="$(pkg-config --libs libusb-1.0 2>/dev/null || echo -lusb-1.0)"
+    cups_libs="$(pkg-config --libs cups 2>/dev/null || echo -lcups)"
+
+    # shellcheck disable=SC2086
+    if ! gcc -O2 -o "${tmpd}/captd" "$src_captd" $usb_cflags $usb_libs -lpthread; then
+        log_error "Bien dich captd that bai (thieu libusb-1.0-0-dev?)."
+        rm -rf "$tmpd"; return 1
+    fi
+    # shellcheck disable=SC2086
+    if ! gcc -O2 -o "${tmpd}/capt-backend" "$src_backend" $cups_libs; then
+        log_error "Bien dich capt-backend that bai (thieu libcups2-dev?)."
+        rm -rf "$tmpd"; return 1
+    fi
+    verify_elf "${tmpd}/captd" || { log_error "captd build ra khong hop le."; rm -rf "$tmpd"; return 1; }
+    verify_elf "${tmpd}/capt-backend" || { log_error "capt-backend build ra khong hop le."; rm -rf "$tmpd"; return 1; }
+
+    local serverbin backenddir
+    serverbin=$(cups-config --serverbin 2>/dev/null || true)
+    [[ -z "$serverbin" ]] && serverbin="/usr/lib/cups"
+    backenddir="${serverbin}/backend"
+    mkdir -p "$backenddir" "$(dirname "$CAPTD_BIN")"
+
+    install -o root -g root -m 0755 "${tmpd}/captd" "$CAPTD_BIN" || {
+        log_error "Cai dat $CAPTD_BIN that bai."; rm -rf "$tmpd"; return 1; }
+    # CUPS BAT BUOC backend phai thuoc root va mode 0700 (neu khong CUPS se
+    # tu choi chay backend do va job "thanh cong" nhung khong co gi in ra).
+    install -o root -g root -m 0700 "${tmpd}/capt-backend" "${backenddir}/capt" || {
+        log_error "Cai dat backend capt that bai."; rm -rf "$tmpd"; return 1; }
+    rm -rf "$tmpd"
+    log_ok "Da cai $CAPTD_BIN va ${backenddir}/capt"
+
+    cat > "$CAPTD_SERVICE" <<UNIT
+[Unit]
+Description=Canon LBP2900 CAPT persistent USB session daemon
+Documentation=https://github.com/brucenguyen1102/Canon-LBP2900-CAPT-Toolkit
+After=network.target
+Before=cups.service
+
+[Service]
+Type=simple
+RuntimeDirectory=captd
+ExecStart=${CAPTD_BIN} ${CAPTD_SOCK}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable captd >/dev/null 2>&1 || log_warn "Khong enable duoc captd.service."
+    systemctl restart captd >/dev/null 2>&1 || { log_error "Khong khoi dong duoc captd.service."; return 1; }
+
+    local i
+    for i in $(seq 1 15); do
+        [[ -S "$CAPTD_SOCK" ]] && break
+        sleep 1
+    done
+    if [[ ! -S "$CAPTD_SOCK" ]]; then
+        log_error "captd khong tao duoc socket $CAPTD_SOCK sau 15 giay."
+        log_error "Xem log: journalctl -u captd -n 30"
+        return 1
+    fi
+    if ! systemctl is-active --quiet captd; then
+        log_error "captd.service khong chay. Xem: journalctl -u captd -n 30"
+        return 1
+    fi
+
+    CANON_URI="capt:${CAPTD_SOCK}"
+    log_ok "captd dang chay, socket: ${CAPTD_SOCK}"
+    log_ok "URI may in se dung: ${CANON_URI}"
+    return 0
+}
+
+# Go captd (dung khi chuyen sang driver Canon chinh hang - hai kien truc
+# khong the cung giu thiet bi USB).
+remove_captd() {
+    if systemctl list-unit-files 2>/dev/null | grep -q '^captd\.service'; then
+        log_info "Dung va go captd.service (driver chinh hang dung ccpd thay the)."
+        systemctl disable --now captd >/dev/null 2>&1 || true
+    fi
+    rm -f "$CAPTD_SERVICE"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    rm -f "$CAPTD_BIN"
+    local serverbin
+    serverbin=$(cups-config --serverbin 2>/dev/null || echo /usr/lib/cups)
+    rm -f "${serverbin}/backend/capt"
 }
 
 # Build + cai dat captdriver (ban ValdikSS/captdriver, nhanh "val", co
@@ -663,6 +845,15 @@ build_and_install_captdriver() {
             fi
         fi
         git config --global --add safe.directory "$BUILD_DIR" >/dev/null 2>&1 || true
+    fi
+
+    # QUAN TRONG: ghi de 3 file nguon da va giao thuc TRUOC khi build. Thieu
+    # buoc nay thi rastertocapt build ra la ban goc -> loi ket cung engine o
+    # job thu 5 quay lai y nguyen (day chinh la loi cua cac ban script truoc:
+    # ma nguon da va nam trong repo nhung khong bao gio duoc dem vao build).
+    if ! overlay_captd_patched_sources; then
+        log_error "Dung: khong ghi de duoc ma nguon da va (ban va chong treo job 5)."
+        return 1
     fi
 
     pushd "$BUILD_DIR" >/dev/null || { log_error "Khong vao duoc thu muc $BUILD_DIR"; return 1; }
@@ -823,8 +1014,15 @@ register_printer() {
         log_error "Khong tim thay file PPD, khong the dang ky may in."
         return 1
     fi
+    # Mac dinh PHAI la capt: (qua captd), khong phai usb:// - dung usb:// la
+    # loi ket cung engine o job thu 5 quay lai.
     if [[ -z "${CANON_URI}" ]]; then
-        CANON_URI="usb://Canon/LBP2900"
+        CANON_URI="capt:${CAPTD_SOCK}"
+    fi
+    if [[ "${CANON_URI}" == usb://* ]]; then
+        log_warn "URI dang la ${CANON_URI} (backend usb:// chuan) - se gay ket cung engine o job thu 5."
+        log_warn "Chuyen sang capt:${CAPTD_SOCK} (qua captd)."
+        CANON_URI="capt:${CAPTD_SOCK}"
     fi
 
     if ! lpadmin -p "$PRINTER_NAME" -E -v "$CANON_URI" -P "$PPD_PATH"; then
@@ -843,6 +1041,286 @@ register_printer() {
             log_warn "Khong the dat '${PRINTER_NAME}' lam may in mac dinh."
         fi
     fi
+    return 0
+}
+
+# ===========================================================================
+# MUC 1 - phan C: DRIVER CANON CHINH HANG v2.71 (thay the driver custom)
+# ===========================================================================
+# Luu y kien truc quan trong: goi amd64 cua Canon van chua cac binary 32-bit
+# (pstocapt, ccpd, captstatusui... la i386), nen tren may 64-bit BAT BUOC phai
+# bat kien truc i386 va cai bo thu vien 32-bit tuong ung, neu khong may in se
+# "cai xong nhung in khong ra gi" (filter chet luc chay vi thieu thu vien).
+# Driver chinh hang giao tiep voi may in qua daemon ccpd + node /dev/usb/lp0
+# (module usblp cua kernel) - NGUOC LAI voi driver custom (captdriver dung
+# libusb truc tiep qua CUPS usb backend va can usblp PHAI duoc go bo). Vi vay
+# hai che do loai tru lan nhau va khi chuyen doi phai don dep che do cu.
+
+# Go file blacklist usblp (neu truoc do cai driver custom co chon blacklist)
+# roi nap lai module usblp - driver chinh hang can /dev/usb/lp0 de hoat dong.
+ensure_usblp_for_official() {
+    log_step "Khoi phuc module usblp (driver chinh hang can /dev/usb/lp*)"
+    # captd giu thiet bi USB qua libusb va KHONG NHA ra - neu con chay thi
+    # ccpd cua driver chinh hang se khong mo duoc /dev/usb/lp0, dan toi dung
+    # trieu chung "bao in thanh cong ma may khong in".
+    remove_captd
+    local blacklist_file="/etc/modprobe.d/blacklist-usblp.conf"
+    if [[ -f "$blacklist_file" ]]; then
+        rm -f "$blacklist_file"
+        log_info "Da go $blacklist_file (file nay do luc cai driver custom tao ra)."
+    fi
+    if ! lsmod 2>/dev/null | grep -q '^usblp'; then
+        modprobe usblp 2>/dev/null || log_warn "Khong nap duoc module usblp - co the can khoi dong lai may."
+    fi
+    # ipp-usb van phai dung lai: no se chiem thiet bi USB cua may in truoc ca
+    # usblp/cups, gay loi cho moi loai driver.
+    systemctl stop ipp-usb >/dev/null 2>&1 || true
+    if dpkg -s ipp-usb >/dev/null 2>&1; then
+        systemctl disable ipp-usb >/dev/null 2>&1 || true
+        systemctl mask ipp-usb >/dev/null 2>&1 || true
+    fi
+    udevadm trigger >/dev/null 2>&1 || true
+    log_ok "Da xu ly xong usblp / ipp-usb cho driver chinh hang."
+}
+
+# Cai mot nhom thu vien i386: thu lan luot cac ten goi ung vien (Ubuntu 24.04
+# "noble" doi ten nhieu goi sang hau to "t64", vd libatk1.0-0t64) va cai ten
+# dau tien ton tai trong kho apt.
+install_i386_lib_group() {
+    local desc="$1"; shift
+    local cand
+    for cand in "$@"; do
+        if apt-cache show "$cand" >/dev/null 2>&1; then
+            if dpkg -l "$cand" 2>/dev/null | grep -q '^ii'; then
+                log_info "Da co san: $cand ($desc)"
+            elif apt-get install -y "$cand" >/dev/null 2>&1; then
+                log_ok "Da cai: $cand ($desc)"
+            else
+                log_warn "Cai that bai: $cand ($desc) - tiep tuc thu ten goi khac neu co."
+                continue
+            fi
+            return 0
+        fi
+    done
+    log_warn "Khong tim thay goi nao cai duoc cho: $desc (thu: $*)"
+    return 1
+}
+
+install_canon_official_deps() {
+    log_step "Cai goi ho tro cho driver Canon chinh hang (bao gom thu vien 32-bit)"
+    apt-get update -y || log_warn "apt-get update gap loi, van tiep tuc thu..."
+    if ! apt-get install -y cups cups-client ghostscript usbutils; then
+        log_error "Khong cai duoc cac goi co ban (cups, ghostscript...)."
+        return 1
+    fi
+
+    # Goi amd64 cua Canon chua binary 32-bit -> can thu vien i386.
+    if [[ "$(dpkg --print-architecture 2>/dev/null)" == "amd64" ]]; then
+        if ! dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386; then
+            log_info "Bat kien truc i386 (dpkg --add-architecture i386)..."
+            dpkg --add-architecture i386 || { log_error "Khong bat duoc kien truc i386."; return 1; }
+            apt-get update -y || log_warn "apt-get update sau khi them i386 gap loi, van tiep tuc thu..."
+        fi
+        local fail=0
+        # Cac thu vien toi thieu de filter pstocapt (32-bit) chay duoc.
+        install_i386_lib_group "libc 32-bit"        libc6:i386                                || fail=1
+        install_i386_lib_group "libstdc++ 32-bit"   libstdc++6:i386                           || fail=1
+        install_i386_lib_group "zlib 32-bit"        zlib1g:i386 zlib1g-t64:i386               || fail=1
+        install_i386_lib_group "libpopt 32-bit"     libpopt0:i386 libpopt0t64:i386            || fail=1
+        install_i386_lib_group "libxml2 32-bit"     libxml2:i386 libxml2t64:i386              || fail=1
+        # Thu vien GTK/glade 32-bit: can cho captstatusui (cua so trang thai).
+        # Thieu chung may van in duoc, nen chi canh bao, khong coi la loi.
+        install_i386_lib_group "libatk 32-bit"      libatk1.0-0:i386 libatk1.0-0t64:i386      || true
+        install_i386_lib_group "libcairo 32-bit"    libcairo2:i386 libcairo2t64:i386          || true
+        install_i386_lib_group "libpango 32-bit"    libpango1.0-0:i386 libpango-1.0-0:i386    || true
+        install_i386_lib_group "libgtk2 32-bit"     libgtk2.0-0:i386 libgtk2.0-0t64:i386      || true
+        install_i386_lib_group "libglade 32-bit"    libglade2-0:i386 libglade2-0t64:i386      || true
+        if (( fail == 1 )); then
+            log_error "Khong cai du duoc thu vien 32-bit toi thieu - driver chinh hang se khong chay duoc."
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Giai nen goi linux-capt-drv-v271-uken.tar.gz va cai 2 goi .deb
+# (cndrvcups-common + cndrvcups-capt) dung kien truc cua may.
+install_canon_official_driver() {
+    log_step "Cai driver Canon chinh hang v2.71 tu goi dong san"
+
+    if [[ ! -f "$CANON_OFFICIAL_BUNDLE" ]]; then
+        log_error "Khong tim thay goi driver chinh hang: $CANON_OFFICIAL_BUNDLE"
+        log_error "Driver Canon co ban quyen rieng, khong tu dong tai duoc. Hay tai \"CAPT Printer Driver for Linux Version 2.71\" tu trang Canon, dat file linux-capt-drv-v271-uken.tar.gz CANH script nay roi chay lai."
+        return 1
+    fi
+
+    local workdir
+    workdir=$(mktemp -d /tmp/canon-capt-official.XXXXXX) || { log_error "Khong tao duoc thu muc tam."; return 1; }
+    if ! tar xzf "$CANON_OFFICIAL_BUNDLE" -C "$workdir"; then
+        log_error "Giai nen that bai: $CANON_OFFICIAL_BUNDLE"
+        rm -rf "$workdir"
+        return 1
+    fi
+
+    local deb_dir
+    case "$(dpkg --print-architecture 2>/dev/null)" in
+        amd64) deb_dir="$workdir/linux-capt-drv-v271-uken/64-bit_Driver/Debian" ;;
+        i386)  deb_dir="$workdir/linux-capt-drv-v271-uken/32-bit_Driver/Debian" ;;
+        *) log_error "Kien truc he thong khong duoc ho tro boi goi Canon nay."; rm -rf "$workdir"; return 1 ;;
+    esac
+
+    local deb_common deb_capt
+    deb_common=$(find "$deb_dir" -maxdepth 1 -name 'cndrvcups-common_*.deb' | head -n1)
+    deb_capt=$(find "$deb_dir" -maxdepth 1 -name 'cndrvcups-capt_*.deb' | head -n1)
+    if [[ -z "$deb_common" || -z "$deb_capt" ]]; then
+        log_error "Khong tim thay goi .deb trong $deb_dir - goi tar.gz co the bi loi/khac phien ban."
+        rm -rf "$workdir"
+        return 1
+    fi
+
+    log_info "Cai: $(basename "$deb_common") + $(basename "$deb_capt")"
+    # Dung apt-get install voi duong dan file .deb de apt tu giai quyet cac
+    # phu thuoc amd64 tu kho (libgtk2.0-0, libglade2-0...) - chac chan hon
+    # "dpkg -i" roi "apt-get -f".
+    if ! apt-get install -y "$deb_common" "$deb_capt"; then
+        log_error "Cai dat goi driver Canon that bai."
+        rm -rf "$workdir"
+        return 1
+    fi
+    rm -rf "$workdir"
+
+    dpkg -s cndrvcups-capt >/dev/null 2>&1 || { log_error "Goi cndrvcups-capt chua duoc cai dung."; return 1; }
+    [[ -f "$CANON_OFFICIAL_PPD" ]] || { log_error "Khong tim thay PPD sau khi cai: $CANON_OFFICIAL_PPD"; return 1; }
+
+    log_ok "Da cai xong driver Canon chinh hang v2.71 (cndrvcups-capt)."
+    return 0
+}
+
+# Dam bao daemon ccpd chay va tu khoi dong cung he thong (driver chinh hang
+# khong in duoc neu ccpd khong chay). Goi deb chi cai init script SysV, nen
+# phai dang ky voi update-rc.d de systemd-sysv-generator tao service tuong ung.
+enable_and_start_ccpd() {
+    log_step "Bat daemon ccpd (bat buoc cho driver Canon chinh hang)"
+    if [[ -f /etc/init.d/ccpd ]]; then
+        update-rc.d ccpd defaults >/dev/null 2>&1 || true
+    fi
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable ccpd >/dev/null 2>&1 || true
+    if ! systemctl restart ccpd >/dev/null 2>&1; then
+        service ccpd start >/dev/null 2>&1 || true
+    fi
+    sleep 2
+    if pgrep -x ccpd >/dev/null 2>&1; then
+        log_ok "Daemon ccpd dang chay."
+        return 0
+    fi
+    log_error "Khong khoi dong duoc ccpd. Kiem tra: sudo systemctl status ccpd"
+    return 1
+}
+
+probe_usblp_node() {
+    compgen -G "/dev/usb/lp*" >/dev/null 2>&1
+}
+
+manual_usblp_node() {
+    log_manual "Khong tim thay node thiet bi /dev/usb/lp* (driver usblp chua nhan may in). Vui long:
+  1. Kiem tra may in da BAT NGUON.
+  2. RUT day cap USB ra khoi may tinh, doi khoang 5 giay, roi CAM LAI.
+  3. Neu van khong duoc, TAT NGUON may in, doi 5 giay, roi BAT LAI.
+  4. Thu mot CONG USB KHAC (tranh hub USB neu co the)."
+}
+
+# Dang ky may in driver chinh hang: hang doi CUPS dung backend ccp:// + PPD
+# Canon, dong thoi khai bao may in voi ccpd (ccpdadmin) tro toi /dev/usb/lp*.
+register_printer_official() {
+    log_step "Dang ky may in voi CUPS va ccpd (driver chinh hang)"
+
+    local rc
+    retry_with_manual_fallback probe_usblp_node manual_usblp_node \
+        "node thiet bi /dev/usb/lp* (usblp)" 5 2
+    rc=$?
+    if (( rc == 1 )); then return 1; fi
+
+    local lpnode=""
+    if (( rc == 0 )); then
+        lpnode=$(ls /dev/usb/lp* 2>/dev/null | head -n1)
+    fi
+    if [[ -z "$lpnode" ]]; then
+        lpnode="/dev/usb/lp0"
+        log_warn "Khong xac dinh duoc node that, dung mac dinh $lpnode."
+    fi
+
+    if ! lpadmin -p "$PRINTER_NAME" -E -v "$CANON_OFFICIAL_URI" -P "$CANON_OFFICIAL_PPD"; then
+        log_error "lpadmin tao hang doi that bai."
+        return 1
+    fi
+    cupsenable "$PRINTER_NAME" >/dev/null 2>&1 || true
+    cupsaccept "$PRINTER_NAME" >/dev/null 2>&1 || true
+    log_ok "Da tao hang doi '${PRINTER_NAME}' (URI: ${CANON_OFFICIAL_URI}, PPD: $(basename "$CANON_OFFICIAL_PPD"))"
+
+    log_info "Khai bao may in voi ccpd: $PRINTER_NAME -> $lpnode"
+    /usr/sbin/ccpdadmin -p "$PRINTER_NAME" -o "$lpnode" || { log_error "ccpdadmin dang ky that bai."; return 1; }
+
+    enable_and_start_ccpd || return 1
+    systemctl restart cups >/dev/null 2>&1 || true
+
+    if ask_yes_no "Dat '${PRINTER_NAME}' lam may in mac dinh?" "y"; then
+        if lpadmin -d "$PRINTER_NAME"; then
+            log_ok "Da dat '${PRINTER_NAME}' lam may in mac dinh."
+        else
+            log_warn "Khong the dat '${PRINTER_NAME}' lam may in mac dinh."
+        fi
+    fi
+    return 0
+}
+
+# Hanh dong tong hop cho MUC 1 khi nguoi dung chon driver CHINH HANG:
+# go sach driver custom (captdriver) roi cai driver Canon v2.71.
+action_local_reinstall_official() {
+    log_step "=== MUC 1: CAI LBP2900 VOI DRIVER CANON CHINH HANG v2.71 ==="
+
+    # Loai tru cheo: go driver custom (captdriver) neu da cai truoc do.
+    cleanup_captdriver_leftovers
+    cleanup_cups_queues
+
+    # Driver chinh hang can usblp (/dev/usb/lp*), nguoc voi driver custom.
+    ensure_usblp_for_official
+
+    if ! install_canon_official_deps; then
+        log_error "Dung: khong cai duoc goi ho tro cho driver chinh hang."
+        return 1
+    fi
+
+    if ! install_canon_official_driver; then
+        log_error "Dung: cai driver Canon chinh hang that bai."
+        return 1
+    fi
+
+    if ! register_printer_official; then
+        log_error "Dang ky may in that bai."
+        return 1
+    fi
+
+    enable_cups_debug_logging || true
+
+    if detect_lan; then
+        log_info "Giao dien: ${LAN_IFACE} | IP may nay: ${LAN_HOST_IP} | Subnet LAN: ${LAN_CIDR}"
+        configure_cupsd
+        mark_printer_shared
+        ensure_avahi
+        configure_firewall
+        restart_services
+        verify_sharing
+    else
+        log_warn "Khong xac dinh duoc subnet LAN, bo qua chia se qua mang (may in van dung binh thuong tren may nay)."
+    fi
+
+    send_test_print "$PRINTER_NAME"
+
+    log_step "HOAN TAT MUC 1 (driver chinh hang)"
+    log_ok "Da cai may in '${PRINTER_NAME}' voi driver Canon chinh hang v2.71."
+    log_info "Tien ich trang thai cua Canon: captstatusui -P ${PRINTER_NAME}"
+    lpstat -p -d 2>&1 || true
     return 0
 }
 
@@ -1202,6 +1680,17 @@ verify_sharing() {
 action_local_reinstall() {
     log_step "=== MUC 1: GO VA CAI LAI LBP2900 (USB truc tiep tren may nay) ==="
 
+    # Chon loai driver: custom (captdriver ValdikSS, mac dinh - nhe, khong can
+    # thu vien 32-bit, da gia co chong treo) hoac Canon CHINH HANG v2.71 (can
+    # goi linux-capt-drv-v271-uken.tar.gz canh script + thu vien i386). Hai
+    # driver loai tru lan nhau: chon driver nao thi driver kia duoc go sach
+    # truoc (custom: cleanup_ccpd go cndrvcups*; chinh hang:
+    # cleanup_captdriver_leftovers go rastertocapt).
+    if (( DRIVER_OFFICIAL == 1 )) || ask_yes_no "Cai driver Canon CHINH HANG v2.71 thay vi driver custom (captdriver)?" "n"; then
+        action_local_reinstall_official
+        return $?
+    fi
+
     cleanup_ccpd
     cleanup_cups_queues
     cleanup_captdriver_leftovers
@@ -1220,12 +1709,21 @@ action_local_reinstall() {
         return 1
     fi
 
-    if ! apply_cups_backend_patch; then
-        log_warn "Khong va duoc loi CUPS usb backend - may in van hoat dong nhung co the treo voi tai lieu phuc tap. Co the chay lai MUC 5 sau."
-    fi
+    # Khong con va CUPS usb backend o day nua: hang doi in gio dung backend
+    # rieng "capt:" (noi toi captd) chu KHONG dung backend usb:// cua CUPS,
+    # nen loi race condition cua backend usb khong con anh huong. Ai van muon
+    # va backend usb (vd de dung cho may in khac) thi chay MUC 5 rieng.
 
     if ! detect_usb_printer; then
         log_error "Da huy o buoc do tim may in qua USB."
+        return 1
+    fi
+
+    # Phai chay SAU detect_usb_printer: ham nay ghi de CANON_URI thanh
+    # "capt:<socket>" (detect_usb_printer dat CANON_URI = usb://... chi de
+    # xac nhan may in co ton tai that).
+    if ! build_and_install_captd; then
+        log_error "Dung: build/cai dat captd that bai (day la phan chong loi job 5)."
         return 1
     fi
 
@@ -1367,6 +1865,13 @@ action_fix_complex_document_hang() {
 
     if ! build_and_install_captdriver; then
         log_error "Build/cai lai captdriver that bai."
+        ok_driver=0
+    fi
+
+    # Build lai ca captd/capt-backend cho khop voi filter vua build (2 phan
+    # nay phai di cung nhau - filter da va chi hoat dong dung khi di qua captd).
+    if ! build_and_install_captd; then
+        log_error "Build/cai lai captd that bai."
         ok_driver=0
     fi
 

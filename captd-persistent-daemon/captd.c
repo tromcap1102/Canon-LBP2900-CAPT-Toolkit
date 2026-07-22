@@ -310,6 +310,30 @@ static void handle_client(int csock)
 	pthread_mutex_destroy(&ctx.write_lock);
 	close(csock);
 
+	/*
+	 * Drain again now that the job is over, and do it AFTER a short settle
+	 * delay.
+	 *
+	 * Why (found on real hardware 2026-07-22): a job would occasionally die
+	 * on its very FIRST command with
+	 *     "bad reply from printer, expected A1 A0 xx xx xx xx,
+	 *      got D0 00 00 02 B0 09"
+	 * -- i.e. the bytes it read were the tail of the PREVIOUS job's reply,
+	 * not its own. The previous job's filter can exit while the printer is
+	 * still pushing out a reply (typically to one of the trailing
+	 * SetJobInfo2 heartbeats or status polls). draining only on client
+	 * *connect* is not enough: if that late reply lands in the microseconds
+	 * after the drain and before the first real read, it is handed to the
+	 * new job and every subsequent read is shifted by one reply. Measured
+	 * at 2 failures in 15 jobs before this change.
+	 *
+	 * Draining here, once the printer has had a moment to finish talking,
+	 * closes that window from the other side. The drain on connect is kept
+	 * as a second line of defence (e.g. after a captd restart).
+	 */
+	usleep(400000);
+	drain_stale();
+
 	pthread_mutex_lock(&g_client_lock);
 	g_client_active = 0;
 	pthread_mutex_unlock(&g_client_lock);
