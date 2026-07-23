@@ -1,0 +1,38 @@
+# Chuan hoa ket thuc dong (line endings).
+#
+# Vi sao can file nay: repo co ca script Linux (may-in-lbp2900.sh) lan script
+# Windows (cai-may-in-lbp2900-windows.bat/.ps1), nen nguoi dung rat de clone
+# tren Windows roi chep sang may Linux. Neu khong co file nay, Git tren Windows
+# (core.autocrlf=true) se ghi ra ban CRLF, va bash tren Linux se bao loi rat kho
+# hieu, vi du:
+#     may-in-lbp2900.sh: line 49: $'\r': command not found
+#     may-in-lbp2900.sh: line 131: syntax error near unexpected token `$'do\r''
+# Cac file nguon C bi CRLF thi van build duoc, nhung tarball hoac patch bi CRLF
+# thi hong han (da gap thuc te 2026-07-22: tarball dong goi tu Windows lam
+# configure chet voi "config.status: error: cannot find input file: Makefile.in"
+# du file do van nam day).
+
+# Mac dinh: de Git tu nhan dien van ban, nhung KHONG tu doi kieu ket thuc dong.
+* -text
+
+# Cac file BAT BUOC phai la LF vi chi chay tren Linux
+*.sh          text eol=lf
+*.c           text eol=lf
+*.h           text eol=lf
+*.patch       text eol=lf
+*.ppd         text eol=lf
+Makefile*     text eol=lf
+configure*    text eol=lf
+
+# Cac file chay tren Windows: giu CRLF
+*.bat         text eol=crlf
+*.ps1         text eol=crlf
+
+# File nhi phan: tuyet doi khong dung toi
+*.tar.gz      binary
+*.tgz         binary
+*.zip         binary
+*.pcapng      binary
+*.pdf         binary
+*.png         binary
+*.jpg         binary
