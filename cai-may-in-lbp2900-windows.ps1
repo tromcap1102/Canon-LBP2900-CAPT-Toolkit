@@ -55,14 +55,61 @@ try {
 # Xoa may in cung ten neu da ton tai, de cai lai sach (an toan chay lai nhieu lan)
 Get-Printer -Name $PrinterName -ErrorAction SilentlyContinue | Remove-Printer -ErrorAction SilentlyContinue
 
+# Don cong WSD "mo coi" con sot lai tu lan add IPP truoc do. Add-Printer -IppURL
+# tao mot cong dang WSD-<GUID>; neu lan truoc that bai giua chung, cong nay co
+# the ket lai va lam lan add sau bao "WSD or IPP print device was not found".
+Get-PrinterPort -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like 'WSD-*' -and -not (Get-Printer -ErrorAction SilentlyContinue | Where-Object PortName -eq $_.Name) } |
+    ForEach-Object { Remove-PrinterPort -Name $_.Name -ErrorAction SilentlyContinue }
+
 Write-Host ""
 Write-Host "Dang them may in '$PrinterName' qua IPP..."
-try {
-    Add-Printer -Name $PrinterName -IppURL $ippUrl -ErrorAction Stop
-    Write-Host "Da them may in thanh cong."
-} catch {
+# Add-Printer -IppURL thuc hien mot buoc do IPP/WSD truc tiep toi may in, va
+# buoc nay THINH THOANG that bai nhat thoi voi thong bao "The specified WSD or
+# IPP print device was not found" du may chu van tra ve HTTP 200 o tren (da gap
+# thuc te 2026-07-24). Lan chay lai thuong thanh cong -> thu lai vai lan thay vi
+# thoat ngay.
+$maxTry = 5
+$added = $false
+for ($i = 1; $i -le $maxTry; $i++) {
+    try {
+        Add-Printer -Name $PrinterName -IppURL $ippUrl -ErrorAction Stop
+        Write-Host "Da them may in thanh cong (lan thu $i)."
+        $added = $true
+        break
+    } catch {
+        $msg = $_.Exception.Message
+        Write-Host "  Lan thu $i/$maxTry that bai: $msg"
+        # Chi loi "not found" (do do IPP/WSD chap nhat thoi) moi dang thu lai.
+        # Cac loi xac dinh khac (vd "already exists", "access denied") thu lai
+        # cung vo ich -> thoat vong lap som de bao loi ro rang ngay.
+        if ($msg -notmatch 'not found|not be found') {
+            break
+        }
+        # don cong WSD mo coi vua tao ra boi lan thu that bai
+        Get-PrinterPort -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like 'WSD-*' -and -not (Get-Printer -ErrorAction SilentlyContinue | Where-Object PortName -eq $_.Name) } |
+            ForEach-Object { Remove-PrinterPort -Name $_.Name -ErrorAction SilentlyContinue }
+        if ($i -lt $maxTry) {
+            Write-Host "  Cho 3 giay roi thu lai..."
+            Start-Sleep -Seconds 3
+        }
+    }
+}
+
+if (-not $added) {
     Write-Host ""
-    Write-Host "LOI khi them may in: $_"
+    Write-Host "LOI: Khong them duoc may in qua IPP sau $maxTry lan thu."
+    Write-Host "May chu ($ServerIP) van phan hoi HTTP 200 o tren, nen day KHONG phai loi mang."
+    Write-Host "Buoc 'Add-Printer -IppURL' cua Windows (dua tren dich vu WSD/Function Discovery)"
+    Write-Host "dang tu choi. Thu cac cach sau:"
+    Write-Host "  1) Chay lai script nay them 1-2 lan (loi nay thuong chi la nhat thoi)."
+    Write-Host "  2) Kiem tra 2 dich vu Windows dang chay (services.msc):"
+    Write-Host "       - Function Discovery Provider Host (fdPHost)"
+    Write-Host "       - Function Discovery Resource Publication (FDResPub)"
+    Write-Host "  3) Cach thu cong luon chay duoc: mo 'Add a printer' -> 'The printer"
+    Write-Host "     that I want isn't listed' -> 'Select a shared printer by name' ->"
+    Write-Host "     dan dia chi nay: $ippUrl"
     Read-Host "Nhan Enter de dong"
     exit 1
 }
